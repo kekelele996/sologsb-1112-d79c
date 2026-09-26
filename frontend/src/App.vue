@@ -9,6 +9,7 @@ import { useRingStore } from './stores/ringStore';
 import { useMeasureStore } from './stores/measureStore';
 import { useSiteStore } from './stores/siteStore';
 import { useSessionStore } from './stores/sessionStore';
+import { useTaxonStore } from './stores/taxonStore';
 import { useAmap } from './hooks/useAmap';
 
 const route = useRoute();
@@ -16,6 +17,7 @@ const ringStore = useRingStore();
 const measureStore = useMeasureStore();
 const siteStore = useSiteStore();
 const sessionStore = useSessionStore();
+const taxonStore = useTaxonStore();
 const amap = useAmap();
 const ready = ref(false);
 
@@ -28,7 +30,15 @@ onMounted(async () => {
   }
   try {
     await seedIfEmpty();
-    await Promise.all([ringStore.hydrate(), measureStore.hydrate(), siteStore.hydrate(), sessionStore.hydrate()]);
+    await Promise.all([
+      ringStore.hydrate(),
+      measureStore.hydrate(),
+      siteStore.hydrate(),
+      sessionStore.hydrate(),
+      taxonStore.hydrate(),
+    ]);
+    // 名录外的旧记录字面补齐到归并台账（各自独立成条，等待人工归并）
+    await taxonStore.syncFromRings(ringStore.rings);
   } catch (error) {
     ElMessage.error(`本地数据装载失败：${(error as Error).message}`);
   } finally {
@@ -54,6 +64,7 @@ async function handleExport() {
         <el-menu-item index="/">统计台</el-menu-item>
         <el-menu-item index="/rings">环志记录</el-menu-item>
         <el-menu-item index="/measure">量度测量</el-menu-item>
+        <el-menu-item index="/taxa">鸟种归并</el-menu-item>
         <el-menu-item index="/sites">鸟点台账</el-menu-item>
         <el-menu-item index="/sessions">调查批次</el-menu-item>
       </el-menu>

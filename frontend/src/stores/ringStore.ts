@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { db } from '../utils/db';
 import { uid } from '../utils/id';
 import { toPlain } from '../utils/plain';
+import { useTaxonStore } from './taxonStore';
 import type { BirdAge, RingRecord, RingStatus } from '../types/ring-record';
 
 export interface RingInput {
@@ -83,6 +84,8 @@ export const useRingStore = defineStore('ring', {
       };
       await db.rings.put(toPlain(record));
       this.rings = [record, ...this.rings];
+      // 名录外的自定义/别名字面同步登记到归并台账（不阻塞环志录入）
+      await useTaxonStore().ensureLiteral(record.speciesCn, record.speciesSci);
       this.duplicateId = '';
       return { record };
     },
@@ -93,6 +96,7 @@ export const useRingStore = defineStore('ring', {
       const next: RingRecord = { ...current, ...patch };
       await db.rings.put(toPlain(next));
       this.rings = this.rings.map((record) => (record.id === id ? next : record));
+      await useTaxonStore().ensureLiteral(next.speciesCn, next.speciesSci);
     },
 
     async removeRing(id: string) {

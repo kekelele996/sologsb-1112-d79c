@@ -43,13 +43,34 @@ export function speciesOf(ring: RingRecord): { cn: string; sci: string } {
   return { cn: ring.speciesCn, sci: ring.speciesSci };
 }
 
-/** 鸟种计数（按记录数降序） */
-export function speciesCount(records: RingRecord[]): Array<{ speciesCn: string; speciesSci: string; count: number }> {
+/** 鸟种字面 → 标准种的解析器（由归并台账提供，默认按字面本身） */
+export interface SpeciesResolver {
+  resolveCn(cn: string): { standardCn: string; standardSci: string };
+}
+
+const identityResolver: SpeciesResolver = {
+  resolveCn: (cn) => ({ standardCn: cn, standardSci: '' }),
+};
+
+/** 把记录字面解析为标准中文名 / 学名（统计归并到同一种，记录字面不改写） */
+export function canonicalOf(record: Pick<RingRecord, 'speciesCn' | 'speciesSci'>, resolver?: SpeciesResolver) {
+  if (!resolver) return { cn: record.speciesCn, sci: record.speciesSci };
+  const resolved = resolver.resolveCn(record.speciesCn);
+  return { cn: resolved.standardCn, sci: resolved.standardSci || record.speciesSci };
+}
+
+/** 鸟种计数（按标准种归并、记录数降序） */
+export function speciesCount(
+  records: RingRecord[],
+  resolver?: SpeciesResolver,
+): Array<{ speciesCn: string; speciesSci: string; count: number }> {
   const map = new Map<string, { speciesCn: string; speciesSci: string; count: number }>();
   records.forEach((record) => {
-    const item = map.get(record.speciesCn) ?? { speciesCn: record.speciesCn, speciesSci: record.speciesSci, count: 0 };
+    const canonical = canonicalOf(record, resolver);
+    const item = map.get(canonical.cn) ?? { speciesCn: canonical.cn, speciesSci: canonical.sci, count: 0 };
+    if (!item.speciesSci && canonical.sci) item.speciesSci = canonical.sci;
     item.count += 1;
-    map.set(record.speciesCn, item);
+    map.set(canonical.cn, item);
   });
   return Array.from(map.values()).sort((a, b) => b.count - a.count);
 }
@@ -71,15 +92,20 @@ export function recaptureRate(records: RingRecord[]): number {
   return base > 0 ? Number(((recaptured / base) * 100).toFixed(1)) : 0;
 }
 
-/** 批次统计：鸟种数、初捕数与重捕数 */
-export function buildSessionStats(session: SurveySession, records: RingRecord[], siteName: string): SessionStats {
+/** 批次统计：鸟种数、初捕数与重捕数（鸟种数按标准种归并） */
+export function buildSessionStats(
+  session: SurveySession,
+  records: RingRecord[],
+  siteName: string,
+  resolver?: SpeciesResolver,
+): SessionStats {
   const scoped = records.filter((record) => record.sessionId === session.id);
   const breakdown = statusBreakdown(scoped);
   const base = breakdown.初捕 + breakdown.重捕;
   return {
     session,
     siteName,
-    speciesCount: new Set(scoped.map((record) => record.speciesCn)).size,
+    speciesCount: new Set(scoped.map((record) => canonicalOf(record, resolver).cn)).size,
     firstCount: breakdown.初捕,
     recaptureCount: breakdown.重捕,
     recoveryCount: breakdown.回收,
@@ -87,9 +113,13 @@ export function buildSessionStats(session: SurveySession, records: RingRecord[],
   };
 }
 
-/** 同鸟种历史均值（按量度字段） */
-export function measureMeans(records: RingRecord[], morphs: Morphometrics[]): Record<string, Record<MeasureKey, number>> {
-  const speciesByRing = new Map(records.map((record) => [record.id, record.speciesCn]));
+/** 同鸟种历史均值（按标准种归并：别名/旧名记录合到同一桶内取均值） */
+export function measureMeans(
+  records: RingRecord[],
+  morphs: Morphometrics[],
+  resolver?: SpeciesResolver,
+): Record<string, Record<MeasureKey, number>> {
+  const speciesByRing = new Map(records.map((record) => [record.id, canonicalOf(record, resolver).cn]));
   const buckets = new Map<string, Morphometrics[]>();
   morphs.forEach((morph) => {
     const species = speciesByRing.get(morph.ringId);

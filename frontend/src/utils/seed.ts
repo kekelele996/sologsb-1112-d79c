@@ -3,12 +3,22 @@ import type { BirdSite } from '../types/bird-site';
 import type { SurveySession } from '../types/session';
 import type { RingRecord } from '../types/ring-record';
 import type { Morphometrics } from '../types/morphometrics';
+import type { Taxon } from '../types/taxon';
 import { SPECIES_CATALOG } from './stats';
 
 const DAY = 86_400_000;
 const isoDaysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
 const dateDaysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
 const sciOf = (cn: string) => SPECIES_CATALOG.find((s) => s.cn === cn)?.sci ?? '';
+
+/**
+ * 示例归并别名：野外别名/简称 → 标准中文名。
+ * 环志记录保留原字面（如「红点颏」「滨鹬」），统计时归并到标准种。
+ */
+export const SEED_ALIASES: Record<string, string[]> = {
+  红喉歌鸲: ['红点颏', '红脖'],
+  黑腹滨鹬: ['滨鹬'],
+};
 
 export const SEED_SITES: BirdSite[] = [
   { id: 'site-001', siteNo: 'S-01', name: '大汶流芦苇荡', lng: 118.052, lat: 38.921, habitat: '芦苇湿地', netCount: 12, note: '主环志区，网阵沿堤布置' },
@@ -40,13 +50,15 @@ function ring(
   ringer: string,
   days: number,
   remark?: string,
+  /** 记录字面学名：别名旧记录按标准学名归档，但中文名保留原字面 */
+  speciesSci?: string,
 ): RingRecord {
   return {
     id: `ring-${String(index).padStart(3, '0')}`,
     ringNo,
     colorRing,
     speciesCn,
-    speciesSci: sciOf(speciesCn),
+    speciesSci: speciesSci ?? sciOf(speciesCn),
     age,
     ringDate: isoDaysAgo(days),
     netNo,
@@ -65,9 +77,9 @@ export const SEED_RINGS: RingRecord[] = [
   ring(3, 'A-10233', '蓝-白', '震旦鸦雀', '成', 'session-001', 'site-001', '7 号网', 3, '初捕', '韩雪', 21, '芦苇丛中捕获，本地留鸟'),
   ring(4, 'A-10234', '无', '苇鹀', '亚成', 'session-001', 'site-001', '2 号网', 4, '初捕', '郑海', 21),
   ring(5, 'A-10101', '绿-橙', '红喉歌鸲', '成', 'session-001', 'site-001', '3 号网', 5, '重捕', '韩雪', 21, '同季第二次重捕'),
-  ring(6, 'A-10241', '无', '黑腹滨鹬', '成', 'session-002', 'site-002', '1 号网', 1, '初捕', '韩雪', 14),
+  ring(6, 'A-10241', '无', '滨鹬', '成', 'session-002', 'site-002', '1 号网', 1, '初捕', '韩雪', 14, undefined, 'Calidris alpina'),
   ring(7, 'A-10242', '黄-蓝-白', '白腰杓鹬', '成', 'session-002', 'site-002', '4 号网', 2, '初捕', '郑海', 14, '大型涉禽，量度后原地放飞'),
-  ring(8, 'A-10243', '无', '黑腹滨鹬', '幼', 'session-002', 'site-002', '1 号网', 3, '初捕', '韩雪', 14),
+  ring(8, 'A-10243', '无', '滨鹬', '幼', 'session-002', 'site-002', '1 号网', 3, '初捕', '韩雪', 14),
   ring(9, 'B-20511', '无', '红胁蓝尾鸲', '亚成', 'session-003', 'site-003', '6 号网', 1, '初捕', '郑海', 7),
   ring(10, 'B-20512', '黑-红', '大山雀', '成', 'session-003', 'site-003', '8 号网', 2, '初捕', '郑海', 7),
   ring(11, 'B-20513', '无', '黄眉柳莺', '幼', 'session-003', 'site-003', '6 号网', 2, '初捕', '郑海', 7),
@@ -131,18 +143,31 @@ export async function seedIfEmpty(): Promise<void> {
   if (flag) {
     return;
   }
-  const [ringCount, morphCount, siteCount, sessionCount] = await Promise.all([
+  const [ringCount, morphCount, siteCount, sessionCount, taxonCount] = await Promise.all([
     db.rings.count(),
     db.morphs.count(),
     db.sites.count(),
     db.sessions.count(),
+    db.taxa.count(),
   ]);
 
-  await db.transaction('rw', db.rings, db.morphs, db.sites, db.sessions, db.meta, async () => {
+  const now = new Date().toISOString();
+  const seedTaxa: Taxon[] = SPECIES_CATALOG.map((item, idx) => ({
+    id: `taxon-cat-${String(idx + 1).padStart(3, '0')}`,
+    standardCn: item.cn,
+    standardSci: item.sci,
+    aliases: SEED_ALIASES[item.cn] ? [...SEED_ALIASES[item.cn]] : [],
+    renameHistory: [],
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  await db.transaction('rw', [db.rings, db.morphs, db.sites, db.sessions, db.taxa, db.meta], async () => {
     if (siteCount === 0) await db.sites.bulkPut(SEED_SITES);
     if (sessionCount === 0) await db.sessions.bulkPut(SEED_SESSIONS);
     if (ringCount === 0) await db.rings.bulkPut(SEED_RINGS);
     if (morphCount === 0) await db.morphs.bulkPut(SEED_MORPHS);
+    if (taxonCount === 0) await db.taxa.bulkPut(seedTaxa);
     await db.meta.put({ key: 'seeded', value: new Date().toISOString() });
   });
 }

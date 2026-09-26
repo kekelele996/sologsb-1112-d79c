@@ -9,8 +9,9 @@ import { useRingStore } from '../stores/ringStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useMeasureStore } from '../stores/measureStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useTaxonStore } from '../stores/taxonStore';
 import { HABITATS, type BirdSite } from '../types/bird-site';
-import { recaptureRate, speciesCount, statusBreakdown } from '../utils/stats';
+import { canonicalOf, recaptureRate, speciesCount, statusBreakdown } from '../utils/stats';
 import { sitesByHabitat } from '../utils/geo';
 
 const router = useRouter();
@@ -18,14 +19,18 @@ const ringStore = useRingStore();
 const siteStore = useSiteStore();
 const measureStore = useMeasureStore();
 const sessionStore = useSessionStore();
+const taxonStore = useTaxonStore();
 const filter = useSiteFilter();
 
 const visibleSites = computed(() => filter.apply(siteStore.sites, sessionStore.sessions));
 const breakdown = computed(() => statusBreakdown(ringStore.rings));
-const speciesList = computed(() => speciesCount(ringStore.rings));
+// 鸟种计数按归并台账解析：别名/旧名记录合到同一标准种
+const speciesList = computed(() => speciesCount(ringStore.rings, taxonStore));
 const habitatStats = computed(() => sitesByHabitat(siteStore.sites));
 const recent = computed(() => ringStore.rings.slice(0, 6));
 const siteNameOf = (siteId: string) => siteStore.siteName(siteId);
+const displaySpecies = (record: (typeof ringStore.rings)[number]) => canonicalOf(record, taxonStore).cn;
+const isAliasRecord = (record: (typeof ringStore.rings)[number]) => taxonStore.resolveCn(record.speciesCn).merged;
 
 /** SiteMap 选中点位（emit 回传点位 id）→ 用点位编号过滤鸟点列表与地图 */
 function selectSite(siteId: string) {
@@ -82,8 +87,8 @@ function selectSite(siteId: string) {
         <el-card shadow="never" class="block">
           <template #header>
             <div class="card-head">
-              <span>鸟种计数</span>
-              <el-button link type="primary" @click="router.push('/rings')">去环志记录</el-button>
+              <span>鸟种计数（按归并台账）</span>
+              <el-button link type="primary" @click="router.push('/taxa')">鸟种归并</el-button>
             </div>
           </template>
           <el-table :data="speciesList" size="small" border max-height="280">
@@ -113,7 +118,12 @@ function selectSite(siteId: string) {
               {{ record.status }}
             </el-tag>
             <span class="recent-ring">{{ record.ringNo }}</span>
-            <span class="recent-species">{{ record.speciesCn }}</span>
+            <span class="recent-species">
+              {{ displaySpecies(record) }}
+              <el-tooltip v-if="isAliasRecord(record)" :content="`原字面：${record.speciesCn}（已归并）`" placement="top">
+                <el-tag size="small" type="warning" effect="plain" class="alias-mini">别名</el-tag>
+              </el-tooltip>
+            </span>
             <span class="recent-site">{{ siteNameOf(record.siteId) }}</span>
           </div>
         </el-card>
@@ -173,6 +183,10 @@ function selectSite(siteId: string) {
 }
 .recent-species {
   color: #2f7d6f;
+}
+.alias-mini {
+  margin-left: 4px;
+  transform: scale(0.9);
 }
 .recent-site {
   margin-left: auto;

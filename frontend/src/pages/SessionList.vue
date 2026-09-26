@@ -8,6 +8,7 @@ import EmptyPanel from '../components/common/EmptyPanel.vue';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useRingStore } from '../stores/ringStore';
+import { useTaxonStore } from '../stores/taxonStore';
 import { cloudText, type SessionStats, type SurveySession } from '../types/session';
 import { buildSessionStats } from '../utils/stats';
 
@@ -15,6 +16,7 @@ const route = useRoute();
 const sessionStore = useSessionStore();
 const siteStore = useSiteStore();
 const ringStore = useRingStore();
+const taxonStore = useTaxonStore();
 
 const dialogVisible = ref(false);
 const editingId = ref('');
@@ -59,7 +61,7 @@ const closedParam = computed(() => (typeof route.query.closed === 'string' ? rou
 
 const statsList = computed<SessionStats[]>(() =>
   sessionStore.sessions
-    .map((session) => buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId)))
+    .map((session) => buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId), taxonStore))
     .filter((item) => {
       if (siteParam.value && siteStore.siteName(item.session.siteId) !== siteParam.value) return false;
       if (closedParam.value === '已关闭' && !item.session.closed) return false;
@@ -74,7 +76,9 @@ const averageRecapture = computed(() => {
   if (list.length === 0) return 0;
   return Number((list.reduce((sum, item) => sum + item.recaptureRate, 0) / list.length).toFixed(1));
 });
-const totalSpecies = computed(() => new Set(ringStore.rings.map((record) => record.speciesCn)).size);
+const totalSpecies = computed(
+  () => new Set(ringStore.rings.map((record) => taxonStore.resolveCn(record.speciesCn).standardCn)).size,
+);
 
 const detail = computed(() => statsList.value.find((item) => item.session.id === detailId.value));
 
@@ -139,7 +143,7 @@ async function submit() {
 }
 
 async function close(session: SurveySession) {
-  const stats = buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId));
+  const stats = buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId), taxonStore);
   const confirmed = await ElMessageBox.confirm(
     `关闭批次 ${session.sessionNo} 后出统计：鸟种 ${stats.speciesCount} 种、初捕 ${stats.firstCount}、重捕 ${stats.recaptureCount}。确认关闭？`,
     '关闭批次',

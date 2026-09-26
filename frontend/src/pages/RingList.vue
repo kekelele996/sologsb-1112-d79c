@@ -9,6 +9,7 @@ import SpeciesPicker from '../components/common/SpeciesPicker.vue';
 import { useRingStore } from '../stores/ringStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useTaxonStore } from '../stores/taxonStore';
 import { BIRD_AGES, RING_STATUSES, STATUS_COLOR, type BirdAge, type RingRecord, type RingStatus } from '../types/ring-record';
 import { formatDate } from '../utils/format';
 import { speciesCount } from '../utils/stats';
@@ -17,6 +18,7 @@ const route = useRoute();
 const ringStore = useRingStore();
 const siteStore = useSiteStore();
 const sessionStore = useSessionStore();
+const taxonStore = useTaxonStore();
 
 const dialogVisible = ref(false);
 const editingId = ref('');
@@ -71,11 +73,13 @@ const sessionSelectParam = computed(() => (typeof route.query.sessionSelect === 
 const visible = computed(() => {
   const kw = kwParam.value.trim().toLowerCase();
   return ringStore.rings.filter((record) => {
-    if (speciesParam.value && record.speciesCn !== speciesParam.value) return false;
+    // 鸟种筛选按归并后的标准种匹配（选别名也能筛出同一种的全部记录）
+    if (speciesParam.value && taxonStore.resolveCn(record.speciesCn).standardCn !== speciesParam.value) return false;
     if (statusParam.value && record.status !== statusParam.value) return false;
     if (sessionSelectParam.value && record.sessionId !== sessionSelectParam.value) return false;
     if (kw) {
-      const haystack = `${record.ringNo} ${record.colorRing} ${record.speciesCn} ${record.speciesSci} ${record.ringer} ${record.netNo}`.toLowerCase();
+      const canonical = taxonStore.resolveCn(record.speciesCn).standardCn;
+      const haystack = `${record.ringNo} ${record.colorRing} ${record.speciesCn} ${canonical} ${record.speciesSci} ${record.ringer} ${record.netNo}`.toLowerCase();
       if (!haystack.includes(kw)) return false;
     }
     return true;
@@ -89,7 +93,12 @@ const existedRecord = computed(() => {
 });
 const existedHistory = computed(() => (existedRecord.value ? ringStore.historyOf(form.value.ringNo) : []));
 
-const entityOptions = computed(() => speciesCount(ringStore.rings).map((item) => item.speciesCn));
+const entityOptions = computed(() => speciesCount(ringStore.rings, taxonStore).map((item) => item.speciesCn));
+
+/** 记录的归并显示信息（旧记录仍可看到原字面） */
+function resolvedSpecies(record: RingRecord) {
+  return taxonStore.resolveCn(record.speciesCn);
+}
 
 function openCreate() {
   editingId.value = '';
@@ -213,8 +222,17 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       <el-table :data="visible" size="small" border>
         <el-table-column prop="ringNo" label="金属环号" width="110" />
         <el-table-column prop="colorRing" label="彩环" width="100" />
-        <el-table-column prop="speciesCn" label="鸟种" width="110" />
-        <el-table-column prop="speciesSci" label="学名" min-width="170" show-overflow-tooltip />
+        <el-table-column label="鸟种（归并）" width="150">
+          <template #default="scope">
+            <div>{{ resolvedSpecies(scope.row).standardCn }}</div>
+            <el-tooltip v-if="resolvedSpecies(scope.row).merged" :content="`旧记录保留原字面：${scope.row.speciesCn}`" placement="top">
+              <el-tag size="small" type="warning" effect="plain" class="literal-tag">原：{{ scope.row.speciesCn }}</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="学名" min-width="170" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.speciesSci || resolvedSpecies(scope.row).standardSci }}</template>
+        </el-table-column>
         <el-table-column prop="age" label="年龄" width="80" />
         <el-table-column label="环志日期" width="110">
           <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
@@ -348,5 +366,9 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
 }
 .ring-form {
   margin-top: 10px;
+}
+.literal-tag {
+  margin-top: 2px;
+  transform: scale(0.92);
 }
 </style>

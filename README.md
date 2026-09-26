@@ -25,7 +25,7 @@ docker compose down
 | 构建 | Vite 6（`npm run build` 含 `vue-tsc --noEmit` 类型检查） |
 | UI | Element Plus 2 |
 | 路由 | Vue Router 4（5 条业务路由 + 404） |
-| 状态 | Pinia（ringStore / measureStore / siteStore / sessionStore） |
+| 状态 | Pinia（ringStore / measureStore / siteStore / sessionStore / taxonStore） |
 | 地图 | 高德地图 JS API（可选，按需动态加载）+ 本地 SVG 网格退化视图 |
 | 存储 | IndexedDB（Dexie，库名 `gbbirdring-db`） |
 | 托管 | nginx:alpine（多阶段构建，SPA try_files + gzip） |
@@ -55,11 +55,11 @@ npm run build    # 类型检查 + 生产构建
 │   ├── nginx.conf             # try_files SPA 回退 + gzip
 │   ├── public/favicon.svg
 │   └── src/
-│       ├── types/             # ring-record / morphometrics / bird-site / session（+ ui.ts）
-│       ├── stores/            # ringStore / measureStore / siteStore / sessionStore
+│       ├── types/             # ring-record / morphometrics / bird-site / session / taxon（+ ui.ts）
+│       ├── stores/            # ringStore / measureStore / siteStore / sessionStore / taxonStore
 │       ├── components/common/ # SiteMap / MeasureInput / RingCodeInput / SpeciesPicker / StatBadge / FilterBar / EmptyPanel
 │       ├── hooks/             # useSiteFilter / useAmap
-│       ├── pages/             # RingBoard / RingList / MeasureEntry / SiteList / SessionList
+│       ├── pages/             # RingBoard / RingList / MeasureEntry / TaxonLedger / SiteList / SessionList
 │       ├── router/index.ts    # 路由表
 │       └── utils/             # stats.ts / geo.ts / db.ts / export.ts（+ seed.ts / id.ts / plain.ts / format.ts）
 ```
@@ -71,12 +71,20 @@ npm run build    # 类型检查 + 生产构建
 | `/` | 统计台 | 鸟种数、初捕/重捕比、鸟点分布图、鸟种计数与生境分布 |
 | `/rings` | 环志记录 | 金属环号 + 彩环双段录入与自动查重，重复时提示并跳转历史记录 |
 | `/measure` | 量度测量 | 6 项量度带单位与范围校验，与同鸟种历史均值比对给出偏离提示 |
+| `/taxa` | 鸟种归并 | 标准中文名/学名/别名台账：别名录入自动用标准名，旧记录保留原字面，环志计数、量度均值与筛选归到同一种 |
 | `/sites` | 鸟点台账 | 地图 / SVG 网格双模式切换，表单拾取坐标即时落点，点位间距提示 |
 | `/sessions` | 调查批次 | 观测条件录入，关闭批次后统计鸟种数、初捕数与重捕数 |
 
 ## 数据存储说明
 
-- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbbirdring-db`），表：`rings`、`morphs`、`sites`、`sessions`、`meta`。
-- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为环志表增加 `[speciesCn+ringDate]` 复合索引并回填历史彩环字段。升级前可用顶栏「导出备份」导出全量 JSON。
-- 首次打开且表为空时写入示例数据（6 个鸟点、4 个调查批次、18 条环志记录与 14 条量度）。
+- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbbirdring-db`），表：`rings`、`morphs`、`sites`、`sessions`、`taxa`、`meta`。
+- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为环志表增加 `[speciesCn+ringDate]` 复合索引并回填历史彩环字段；`db.version(3).upgrade(...)` 新增 `taxa` 鸟种归并台账，按名录与历史环志字面自动建立标准种（名录外字面各自独立成条，待人工归并），环志/量度记录原字面不改写。升级前可用顶栏「导出备份」导出全量 JSON。
+- 首次打开且表为空时写入示例数据（6 个鸟点、4 个调查批次、18 条环志记录、14 条量度与 14 个标准种，含「红点颏→红喉歌鸲」「滨鹬→黑腹滨鹬」别名归并示例）。
+
+## 鸟种归并规则
+
+- 志愿者在环志/量度表单选到别名时，自动写入标准中文名与学名；历史环志、量度记录的原字面**永不改写**，列表以「原：xxx」小标签与悬浮提示保留可查。
+- 环志计数（统计台/批次鸟种数）、量度历史均值、鸟种筛选统一按台账解析到标准种后合并计算；调整标准种名后统计即时按新名称重算。
+- 标准中文名被调整时，旧名自动并入别名并写入更名轨迹（时间线可查），归并关系与历史档案仍可按旧名检索。
+- 保存拦截（不落库）并指出冲突记录：① 别名已归属其他鸟种；② 别名/被归并种在历史记录里的学名与标准学名不一致；③ 学名已被其他标准种占用；④ 标准名与他种标准名/别名撞名；⑤ 同批次别名重复。鸟种归并（吸收整个标准种）同样校验学名一致性。
 - 容器无状态：不使用数据库服务、不挂载命名卷，`docker compose down` 后数据仍留在浏览器中。

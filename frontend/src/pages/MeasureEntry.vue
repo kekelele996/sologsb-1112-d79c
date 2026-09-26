@@ -6,12 +6,14 @@ import SpeciesPicker from '../components/common/SpeciesPicker.vue';
 import EmptyPanel from '../components/common/EmptyPanel.vue';
 import { useRingStore } from '../stores/ringStore';
 import { useMeasureStore } from '../stores/measureStore';
+import { useTaxonStore } from '../stores/taxonStore';
 import { MEASURE_FIELDS, type MeasureKey, type Morphometrics } from '../types/morphometrics';
 import { deviationsOf, measureMeans } from '../utils/stats';
 import { formatDateTime } from '../utils/format';
 
 const ringStore = useRingStore();
 const measureStore = useMeasureStore();
+const taxonStore = useTaxonStore();
 
 const selectedRingId = ref(ringStore.rings[0]?.id ?? '');
 const speciesCn = ref(ringStore.rings[0]?.speciesCn ?? '红喉歌鸲');
@@ -48,14 +50,18 @@ const ringOptions = computed(() =>
 
 const selectedRing = computed(() => ringStore.rings.find((record) => record.id === selectedRingId.value));
 
-const meansBySpecies = computed(() => measureMeans(ringStore.rings, measureStore.morphs));
-const currentMeans = computed(() => meansBySpecies.value[speciesCn.value]);
-const measuredSpeciesCount = computed(() =>
-  new Set(
-    measureStore.morphs
-      .map((morph) => ringStore.rings.find((record) => record.id === morph.ringId)?.speciesCn)
-      .filter(Boolean) as string[],
-  ).size,
+// 量度均值按标准种归并：别名/旧名记录合到同一桶
+const meansBySpecies = computed(() => measureMeans(ringStore.rings, measureStore.morphs, taxonStore));
+const currentCanonical = computed(() => taxonStore.resolveCn(speciesCn.value).standardCn);
+const currentMeans = computed(() => meansBySpecies.value[currentCanonical.value]);
+const measuredSpeciesCount = computed(
+  () =>
+    new Set(
+      measureStore.morphs
+        .map((morph) => ringStore.rings.find((record) => record.id === morph.ringId))
+        .filter(Boolean)
+        .map((ring) => taxonStore.resolveCn((ring as NonNullable<typeof ring>).speciesCn).standardCn),
+    ).size,
 );
 
 const liveDeviations = computed(() =>
@@ -64,7 +70,7 @@ const liveDeviations = computed(() =>
       acc[field.key] = Number(form.value[field.key]) || 0;
       return acc;
     }, {} as Record<MeasureKey, number>),
-    speciesCn.value,
+    currentCanonical.value,
     currentMeans.value,
   ),
 );
@@ -74,7 +80,8 @@ const deviationMap = computed(() => new Map(liveDeviations.value.map((item) => [
 const morphRows = computed(() =>
   measureStore.morphs.map((morph) => {
     const ring = ringStore.rings.find((record) => record.id === morph.ringId);
-    const species = ring?.speciesCn ?? '';
+    const species = ring ? taxonStore.resolveCn(ring.speciesCn).standardCn : '';
+    const literalCn = ring?.speciesCn ?? '';
     const deviations = deviationsOf(
       MEASURE_FIELDS.reduce((acc, field) => {
         acc[field.key] = Number(morph[field.key]) || 0;
@@ -87,6 +94,8 @@ const morphRows = computed(() =>
       morph,
       ringNo: ring?.ringNo ?? '未知环号',
       species,
+      literalCn,
+      merged: literalCn !== species,
       warnings: deviations.filter((item) => item.level !== '正常'),
     };
   }),
@@ -214,7 +223,7 @@ async function remove(morph: Morphometrics) {
           <template #header>
             <div class="card-head">
               <span>同鸟种历史均值</span>
-              <span class="card-note">{{ speciesCn }} · 已量度 {{ measuredSpeciesCount }} 种</span>
+              <span class="card-note">{{ currentCanonical }} · 已量度 {{ measuredSpeciesCount }} 种</span>
             </div>
           </template>
           <div v-for="row in meanRows" :key="row.key" class="mean-row">
@@ -236,8 +245,13 @@ async function remove(morph: Morphometrics) {
             <el-table-column label="环号" width="110">
               <template #default="scope">{{ scope.row.ringNo }}</template>
             </el-table-column>
-            <el-table-column label="鸟种" width="110">
-              <template #default="scope">{{ scope.row.species }}</template>
+            <el-table-column label="鸟种（归并）" width="130">
+              <template #default="scope">
+                <div>{{ scope.row.species }}</div>
+                <el-tag v-if="scope.row.merged" size="small" type="warning" effect="plain" class="literal-tag">
+                  原：{{ scope.row.literalCn }}
+                </el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="喙长×喙宽(mm)" width="140">
               <template #default="scope">{{ scope.row.morph.billLength }} × {{ scope.row.morph.billWidth }}</template>
@@ -366,5 +380,9 @@ async function remove(morph: Morphometrics) {
 }
 .warn-tag {
   margin: 0 4px 2px 0;
+}
+.literal-tag {
+  margin-top: 2px;
+  transform: scale(0.9);
 }
 </style>
