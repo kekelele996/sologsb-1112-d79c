@@ -6,12 +6,15 @@ import SpeciesPicker from '../components/common/SpeciesPicker.vue';
 import EmptyPanel from '../components/common/EmptyPanel.vue';
 import { useRingStore } from '../stores/ringStore';
 import { useMeasureStore } from '../stores/measureStore';
+import { useSpeciesStore } from '../stores/speciesStore';
 import { MEASURE_FIELDS, type MeasureKey, type Morphometrics } from '../types/morphometrics';
 import { deviationsOf, measureMeans } from '../utils/stats';
+import { canonicalRings, resolveName } from '../utils/species-merge';
 import { formatDateTime } from '../utils/format';
 
 const ringStore = useRingStore();
 const measureStore = useMeasureStore();
+const speciesStore = useSpeciesStore();
 
 const selectedRingId = ref(ringStore.rings[0]?.id ?? '');
 const speciesCn = ref(ringStore.rings[0]?.speciesCn ?? '红喉歌鸲');
@@ -48,14 +51,14 @@ const ringOptions = computed(() =>
 
 const selectedRing = computed(() => ringStore.rings.find((record) => record.id === selectedRingId.value));
 
-const meansBySpecies = computed(() => measureMeans(ringStore.rings, measureStore.morphs));
-const currentMeans = computed(() => meansBySpecies.value[speciesCn.value]);
-const measuredSpeciesCount = computed(() =>
-  new Set(
-    measureStore.morphs
-      .map((morph) => ringStore.rings.find((record) => record.id === morph.ringId)?.speciesCn)
-      .filter(Boolean) as string[],
-  ).size,
+/** 均值按归并后的标准种汇总：别名字面的旧记录也计入同一种 */
+const canonical = computed(() => canonicalRings(ringStore.rings, speciesStore.merges));
+const meansBySpecies = computed(() => measureMeans(canonical.value, measureStore.morphs));
+/** 比对鸟种的归并标准名（选中别名或旧记录为别名字面时都归到标准种） */
+const resolvedSpeciesCn = computed(() => resolveName(speciesCn.value, speciesStore.merges));
+const currentMeans = computed(() => meansBySpecies.value[resolvedSpeciesCn.value]);
+const measuredSpeciesCount = computed(
+  () => new Set(canonical.value.filter((record) => measureStore.morphs.some((morph) => morph.ringId === record.id)).map((record) => record.speciesCn)).size,
 );
 
 const liveDeviations = computed(() =>
@@ -64,7 +67,7 @@ const liveDeviations = computed(() =>
       acc[field.key] = Number(form.value[field.key]) || 0;
       return acc;
     }, {} as Record<MeasureKey, number>),
-    speciesCn.value,
+    resolvedSpeciesCn.value,
     currentMeans.value,
   ),
 );
@@ -75,18 +78,20 @@ const morphRows = computed(() =>
   measureStore.morphs.map((morph) => {
     const ring = ringStore.rings.find((record) => record.id === morph.ringId);
     const species = ring?.speciesCn ?? '';
+    const resolved = resolveName(species, speciesStore.merges);
     const deviations = deviationsOf(
       MEASURE_FIELDS.reduce((acc, field) => {
         acc[field.key] = Number(morph[field.key]) || 0;
         return acc;
       }, {} as Record<MeasureKey, number>),
-      species,
-      meansBySpecies.value[species],
+      resolved,
+      meansBySpecies.value[resolved],
     );
     return {
       morph,
       ringNo: ring?.ringNo ?? '未知环号',
       species,
+      resolved,
       warnings: deviations.filter((item) => item.level !== '正常'),
     };
   }),
@@ -214,7 +219,11 @@ async function remove(morph: Morphometrics) {
           <template #header>
             <div class="card-head">
               <span>同鸟种历史均值</span>
-              <span class="card-note">{{ speciesCn }} · 已量度 {{ measuredSpeciesCount }} 种</span>
+              <span class="card-note">
+                {{ resolvedSpeciesCn }}
+                <template v-if="resolvedSpeciesCn !== speciesCn">（原字面 {{ speciesCn }}）</template>
+                · 已量度 {{ measuredSpeciesCount }} 种
+              </span>
             </div>
           </template>
           <div v-for="row in meanRows" :key="row.key" class="mean-row">
@@ -236,8 +245,13 @@ async function remove(morph: Morphometrics) {
             <el-table-column label="环号" width="110">
               <template #default="scope">{{ scope.row.ringNo }}</template>
             </el-table-column>
-            <el-table-column label="鸟种" width="110">
-              <template #default="scope">{{ scope.row.species }}</template>
+            <el-table-column label="鸟种" width="130">
+              <template #default="scope">
+                <span>{{ scope.row.species }}</span>
+                <el-tag v-if="scope.row.resolved !== scope.row.species" size="small" type="success" effect="plain" class="warn-tag">
+                  → {{ scope.row.resolved }}
+                </el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="喙长×喙宽(mm)" width="140">
               <template #default="scope">{{ scope.row.morph.billLength }} × {{ scope.row.morph.billWidth }}</template>

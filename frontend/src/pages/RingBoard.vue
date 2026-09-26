@@ -9,8 +9,10 @@ import { useRingStore } from '../stores/ringStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useMeasureStore } from '../stores/measureStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSpeciesStore } from '../stores/speciesStore';
 import { HABITATS, type BirdSite } from '../types/bird-site';
 import { recaptureRate, speciesCount, statusBreakdown } from '../utils/stats';
+import { canonicalRings, mergedLiterals } from '../utils/species-merge';
 import { sitesByHabitat } from '../utils/geo';
 
 const router = useRouter();
@@ -18,11 +20,15 @@ const ringStore = useRingStore();
 const siteStore = useSiteStore();
 const measureStore = useMeasureStore();
 const sessionStore = useSessionStore();
+const speciesStore = useSpeciesStore();
 const filter = useSiteFilter();
 
 const visibleSites = computed(() => filter.apply(siteStore.sites, sessionStore.sessions));
 const breakdown = computed(() => statusBreakdown(ringStore.rings));
-const speciesList = computed(() => speciesCount(ringStore.rings));
+/** 鸟种计数按归并后的标准名汇总（旧记录原字面不动，统计归到同一种） */
+const canonical = computed(() => canonicalRings(ringStore.rings, speciesStore.merges));
+const speciesList = computed(() => speciesCount(canonical.value));
+const literals = computed(() => mergedLiterals(ringStore.rings, speciesStore.merges));
 const habitatStats = computed(() => sitesByHabitat(siteStore.sites));
 const recent = computed(() => ringStore.rings.slice(0, 6));
 const siteNameOf = (siteId: string) => siteStore.siteName(siteId);
@@ -83,11 +89,21 @@ function selectSite(siteId: string) {
           <template #header>
             <div class="card-head">
               <span>鸟种计数</span>
-              <el-button link type="primary" @click="router.push('/rings')">去环志记录</el-button>
+              <span>
+                <el-button link type="primary" @click="router.push('/species')">归并台账</el-button>
+                <el-button link type="primary" @click="router.push('/rings')">去环志记录</el-button>
+              </span>
             </div>
           </template>
           <el-table :data="speciesList" size="small" border max-height="280">
-            <el-table-column prop="speciesCn" label="鸟种" width="110" />
+            <el-table-column label="鸟种" width="150">
+              <template #default="scope">
+                <div>{{ scope.row.speciesCn }}</div>
+                <div v-if="literals.get(scope.row.speciesCn)?.length" class="via-note">
+                  含别名：{{ literals.get(scope.row.speciesCn)!.join('、') }}
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column prop="speciesSci" label="学名" show-overflow-tooltip />
             <el-table-column prop="count" label="记录数" width="80" align="right" />
           </el-table>
@@ -178,5 +194,10 @@ function selectSite(siteId: string) {
   margin-left: auto;
   color: #8a99a5;
   font-size: 12px;
+}
+.via-note {
+  font-size: 12px;
+  color: #8a99a5;
+  line-height: 1.4;
 }
 </style>

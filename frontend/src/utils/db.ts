@@ -3,18 +3,20 @@ import type { RingRecord } from '../types/ring-record';
 import type { Morphometrics } from '../types/morphometrics';
 import type { BirdSite } from '../types/bird-site';
 import type { SurveySession } from '../types/session';
+import type { SpeciesMerge } from '../types/species-merge';
 
 /** IndexedDB 库名（浏览器本地存储，无后端） */
 export const DB_NAME = 'gbbirdring-db';
 
 /** 当前 schema 版本，与 db.version(n) 对应 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 class BirdRingDB extends Dexie {
   rings!: Table<RingRecord, string>;
   morphs!: Table<Morphometrics, string>;
   sites!: Table<BirdSite, string>;
   sessions!: Table<SurveySession, string>;
+  merges!: Table<SpeciesMerge, string>;
   meta!: Table<{ key: string; value: string }, string>;
 
   constructor() {
@@ -49,6 +51,16 @@ class BirdRingDB extends Dexie {
             }
           });
       });
+
+    // v3：新增鸟种归并台账表 merges（别名 → 标准鸟种，含改名历史）。升级前请先在顶栏「导出备份」。
+    this.version(3).stores({
+      rings: 'id, ringNo, speciesCn, status, ringDate, siteId, sessionId, [speciesCn+ringDate]',
+      morphs: 'id, ringId, measuredAt',
+      sites: 'id, siteNo, habitat, name',
+      sessions: 'id, sessionNo, date, siteId, closed',
+      merges: 'id, standardCn, updatedAt',
+      meta: 'key',
+    });
   }
 }
 

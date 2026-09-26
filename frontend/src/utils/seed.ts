@@ -3,6 +3,7 @@ import type { BirdSite } from '../types/bird-site';
 import type { SurveySession } from '../types/session';
 import type { RingRecord } from '../types/ring-record';
 import type { Morphometrics } from '../types/morphometrics';
+import type { SpeciesMerge } from '../types/species-merge';
 import { SPECIES_CATALOG } from './stats';
 
 const DAY = 86_400_000;
@@ -40,13 +41,14 @@ function ring(
   ringer: string,
   days: number,
   remark?: string,
+  sciOverride?: string,
 ): RingRecord {
   return {
     id: `ring-${String(index).padStart(3, '0')}`,
     ringNo,
     colorRing,
     speciesCn,
-    speciesSci: sciOf(speciesCn),
+    speciesSci: sciOverride ?? sciOf(speciesCn),
     age,
     ringDate: isoDaysAgo(days),
     netNo,
@@ -78,6 +80,9 @@ export const SEED_RINGS: RingRecord[] = [
   ring(16, 'C-30102', '无', '北红尾鸲', '成', 'session-004', 'site-001', '5 号网', 2, '初捕', '郑海', 2),
   ring(17, 'A-10099', '无', '红喉歌鸲', '成', 'session-004', 'site-001', '3 号网', 3, '回收', '郑海', 2, '回收自外站环志个体'),
   ring(18, 'C-30103', '无', '黄鹡鸰', '幼', 'session-004', 'site-001', '6 号网', 4, '初捕', '韩雪', 2),
+  // 以下两条按野外记录原字面（别名 / 简称）登记，由归并台账归到标准鸟种
+  ring(19, 'A-10251', '无', '红点颏', '成', 'session-004', 'site-001', '3 号网', 4, '初捕', '韩雪', 2, '野外记录写作红点颏，归并红喉歌鸲', 'Calliope calliope'),
+  ring(20, 'B-20516', '无', '树串儿', '幼', 'session-003', 'site-003', '6 号网', 4, '初捕', '郑海', 7, '记录简称树串儿，归并黄眉柳莺', 'Phylloscopus inornatus'),
 ];
 
 function morph(
@@ -125,24 +130,50 @@ export const SEED_MORPHS: Morphometrics[] = [
   morph(14, 'ring-016', 12.6, 3.9, 78.2, 62.4, 22.0, 16.8, 2, '郑海', 2),
 ];
 
+/** 鸟种归并台账示例：野外别名 / 简称 → 标准鸟种 */
+export const SEED_MERGES: SpeciesMerge[] = [
+  {
+    id: 'merge-001',
+    standardCn: '红喉歌鸲',
+    standardSci: 'Calliope calliope',
+    aliases: ['红点颏', '红喉鸲'],
+    renames: [],
+    note: '野外记录常简写为红点颏',
+    createdAt: isoDaysAgo(20),
+    updatedAt: isoDaysAgo(20),
+  },
+  {
+    id: 'merge-002',
+    standardCn: '黄眉柳莺',
+    standardSci: 'Phylloscopus inornatus',
+    aliases: ['树串儿', '黄眉柳串'],
+    renames: [],
+    note: '调查表上常见简称',
+    createdAt: isoDaysAgo(20),
+    updatedAt: isoDaysAgo(20),
+  },
+];
+
 /** 首次打开（表内无数据）时写入示例数据；已有数据则不动 */
 export async function seedIfEmpty(): Promise<void> {
   const flag = await db.meta.get('seeded');
   if (flag) {
     return;
   }
-  const [ringCount, morphCount, siteCount, sessionCount] = await Promise.all([
+  const [ringCount, morphCount, siteCount, sessionCount, mergeCount] = await Promise.all([
     db.rings.count(),
     db.morphs.count(),
     db.sites.count(),
     db.sessions.count(),
+    db.merges.count(),
   ]);
 
-  await db.transaction('rw', db.rings, db.morphs, db.sites, db.sessions, db.meta, async () => {
+  await db.transaction('rw', [db.rings, db.morphs, db.sites, db.sessions, db.merges, db.meta], async () => {
     if (siteCount === 0) await db.sites.bulkPut(SEED_SITES);
     if (sessionCount === 0) await db.sessions.bulkPut(SEED_SESSIONS);
     if (ringCount === 0) await db.rings.bulkPut(SEED_RINGS);
     if (morphCount === 0) await db.morphs.bulkPut(SEED_MORPHS);
+    if (mergeCount === 0) await db.merges.bulkPut(SEED_MERGES);
     await db.meta.put({ key: 'seeded', value: new Date().toISOString() });
   });
 }

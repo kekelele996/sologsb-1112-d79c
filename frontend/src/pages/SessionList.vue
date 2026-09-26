@@ -8,13 +8,16 @@ import EmptyPanel from '../components/common/EmptyPanel.vue';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useRingStore } from '../stores/ringStore';
+import { useSpeciesStore } from '../stores/speciesStore';
 import { cloudText, type SessionStats, type SurveySession } from '../types/session';
 import { buildSessionStats } from '../utils/stats';
+import { canonicalRings } from '../utils/species-merge';
 
 const route = useRoute();
 const sessionStore = useSessionStore();
 const siteStore = useSiteStore();
 const ringStore = useRingStore();
+const speciesStore = useSpeciesStore();
 
 const dialogVisible = ref(false);
 const editingId = ref('');
@@ -57,9 +60,12 @@ const rules: FormRules = {
 const siteParam = computed(() => (typeof route.query.site === 'string' ? route.query.site : ''));
 const closedParam = computed(() => (typeof route.query.closed === 'string' ? route.query.closed : ''));
 
+/** 批次统计按归并后的标准种计数（别名字面的旧记录归到同一种） */
+const canonical = computed(() => canonicalRings(ringStore.rings, speciesStore.merges));
+
 const statsList = computed<SessionStats[]>(() =>
   sessionStore.sessions
-    .map((session) => buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId)))
+    .map((session) => buildSessionStats(session, canonical.value, siteStore.siteName(session.siteId)))
     .filter((item) => {
       if (siteParam.value && siteStore.siteName(item.session.siteId) !== siteParam.value) return false;
       if (closedParam.value === '已关闭' && !item.session.closed) return false;
@@ -74,7 +80,7 @@ const averageRecapture = computed(() => {
   if (list.length === 0) return 0;
   return Number((list.reduce((sum, item) => sum + item.recaptureRate, 0) / list.length).toFixed(1));
 });
-const totalSpecies = computed(() => new Set(ringStore.rings.map((record) => record.speciesCn)).size);
+const totalSpecies = computed(() => new Set(canonical.value.map((record) => record.speciesCn)).size);
 
 const detail = computed(() => statsList.value.find((item) => item.session.id === detailId.value));
 
@@ -139,7 +145,7 @@ async function submit() {
 }
 
 async function close(session: SurveySession) {
-  const stats = buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId));
+  const stats = buildSessionStats(session, canonical.value, siteStore.siteName(session.siteId));
   const confirmed = await ElMessageBox.confirm(
     `关闭批次 ${session.sessionNo} 后出统计：鸟种 ${stats.speciesCount} 种、初捕 ${stats.firstCount}、重捕 ${stats.recaptureCount}。确认关闭？`,
     '关闭批次',
